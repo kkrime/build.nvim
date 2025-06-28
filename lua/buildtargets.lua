@@ -114,7 +114,6 @@ local function is_file_a_target(file_location)
     close_buffer = true
   end
 
-  local is_loaded = vim.api.nvim_buf_is_loaded(bufnr)
   local parser = vim.treesitter.get_parser(bufnr, "go")
   local tree = parser:parse()[1]
 
