@@ -108,11 +108,13 @@ local function is_file_a_target(file_location)
   local close_buffer = false
   local bufnr = vim.fn.bufnr(file_location)
   if bufnr == -1 then
-    vim.api.nvim_command('badd ' .. file_location)
+    vim.cmd('badd ' .. file_location)
     bufnr = vim.fn.bufnr(file_location)
+    vim.fn.bufload(bufnr)
     close_buffer = true
   end
 
+  local is_loaded = vim.api.nvim_buf_is_loaded(bufnr)
   local parser = vim.treesitter.get_parser(bufnr, "go")
   local tree = parser:parse()[1]
 
