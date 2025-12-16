@@ -12,6 +12,7 @@ local height = 'height'
 local width = 'width'
 local idx = 'idx'
 local location = 'location'
+local name = 'name'
 local add_filename_extension = 'add_filename_extension'
 local resolution_string = 'resolution_string'
 
@@ -25,7 +26,6 @@ M._current_buildtargets = {}
 
 ---@type collisions
 M._collisions = {}
-
 function M.setup(cfg)
   if cfg and cfg.get_project_root_func then
     get_project_root = cfg.get_project_root_func
@@ -51,7 +51,7 @@ end
 
 --- Checks if buildtargets should be used or not
 ---
----@return bool # true if buildtargest should be used, false if buildtargets should not be used
+---@return boolean # true if buildtargest should be used, false if buildtargets should not be used
 function M.use_buildtargets()
   return get_project_root ~= nil
 end
@@ -60,7 +60,7 @@ end
 ---
 ---@param target_name target_name
 ---@param project_root project_root
----@return bool # if buildtarget updated to new value, false if current buildtraget already set to buildtarget
+---@return boolean # if buildtarget updated to new value, false if current buildtraget already set to buildtarget
 local function update_current_buildtarget(target_name, project_root)
   local current_buildtarget_backup = M._current_buildtargets[project_root]
   if current_buildtarget_backup ~= target_name then
@@ -103,7 +103,7 @@ end
 --- checks if given file is a target i.e goes it contain 'package main' and 'func main()'
 ---
 ---@param file_location string
----@return bool # true if file_location is a target
+---@return boolean # true if file_location is a target
 local function is_file_a_target(file_location)
   local close_buffer = false
   local bufnr = vim.fn.bufnr(file_location)
@@ -182,7 +182,8 @@ local function get_project_targets(bufnr, project_root)
               if is_file_a_target(file_location) then
                 menu_height = menu_height + 1
                 local target_name = get_target_name(file_location)
-                M._add_target_to_cache(targets, target_name, { idx = menu_height, location = file_location },
+                M._add_target_to_cache(targets, target_name,
+                  { idx = menu_height, name = target_name, location = file_location },
                   project_root)
                 if #target_name > menu_width then
                   menu_width = #target_name
@@ -205,6 +206,7 @@ local function get_project_targets(bufnr, project_root)
       vim.notify(vim.inspect({ "targets", targets }))
     else
       M._cache[project_root] = targets
+      vim.notify("safe")
       save_buildtargets()
     end
     -- vim.notify(vim.inspect({ "targets", targets = targets }))
@@ -311,7 +313,8 @@ local function show_menu(co)
   -- capture bufnr of current buffer for get_project_targets()
   local bufnr_called_from = vim.api.nvim_get_current_buf()
 
-  local user_selection
+  local user_selection_target_name
+  local user_selection_target_location
 
   local menu_opts = M._cache[project_root][menu]
   local menu_height = menu_opts.height
@@ -328,7 +331,8 @@ local function show_menu(co)
     borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
     callback = function(_, sel)
       local selection = vim.api.nvim_get_current_line()
-      user_selection = M._cache[project_root][selection][location]
+      user_selection_target_name = M._cache[project_root][selection][location]
+      user_selection_target_location = M._cache[project_root][selection][location]
       update_buildtarget_map(selection, project_root)
     end
   })
@@ -386,7 +390,7 @@ local function show_menu(co)
     pattern = tostring(menu_winnr),
     callback = function()
       for _, cr in ipairs(menu_coroutines) do
-        coroutine.resume(cr, user_selection, err)
+        coroutine.resume(cr, user_selection_target_name, user_selection_target_location, err)
       end
       menu_coroutines = {}
       menu_visible_for_proj = nil
@@ -396,15 +400,17 @@ end
 
 --- returns the location of the current build target for the current project
 ---
----@return location location
+---@return target_name|nil
+---@return location|nil
 function M.get_current_buildtarget_location()
   local project_root = get_project_root()
   local current_target = M._current_buildtargets[project_root]
   if current_target then
+    local buildtarget_name = M._cache[project_root][current_target][name]
     local buildtarget_location = M._cache[project_root][current_target][location]
-    return buildtarget_location
+    return buildtarget_name, buildtarget_location
   end
-  return nil
+  return nil, nil
 end
 
 --- scans the current project; if only one build target in project
@@ -435,7 +441,7 @@ function M.select_buildtarget(co)
       update_current_buildtarget(target_name, project_root)
       local target_location = M._cache[project_root][target_name][location]
       vim.schedule(function()
-        coroutine.resume(co, target_location, nil)
+        coroutine.resume(co, target_name, target_location, nil)
       end)
       return
     end
@@ -443,6 +449,42 @@ function M.select_buildtarget(co)
 
   -- if multiple build targets, then launch menu and ask user to select
   show_menu(co)
+end
+
+--- gets the build target and runs an callback passed into it
+--- with the build target as a parameter
+---@param callback fun(a: target_name, b: target_location): location, target_name
+function M.run_action(callback)
+  -- local target_name
+  -- local target_location
+  -- local current_target = M._current_buildtargets[project_root]
+  -- vim.notify(vim.inspect({ "current_target", current_target == nil }))
+
+  local target_name, target_location = M.get_current_buildtarget_location()
+
+  if target_location then
+    callback(target_name, target_location)
+  else
+    coroutine.wrap(function()
+      local co = coroutine.running()
+      local err = M.select_buildtarget(co)
+      if err then
+        vim.notify("error in select_buildgarget()" .. " failed", vim.log.levels.ERROR)
+        return
+      end
+      -- wait for user to select target
+      target_name, target_location, err = coroutine.yield()
+      if err then
+        vim.notify("error getting build target" .. " failed", vim.log.levels.ERROR)
+        return
+      elseif not target_location then
+        -- user closed menu without making a selection
+        return
+      end
+      -- vim.api.nvim_command([[:GoBuild ]] .. target_location)
+      callback(target_name, target_location)
+    end)()
+  end
 end
 
 --- checks if two target are the same based on their location
@@ -632,6 +674,7 @@ local function resolve_target_name_collision(target_name, target_details, projec
     resolution_string = new_target_resolution_string,
     capture_pattern = '.*'
   }
+
   local new_target_name                    = new_target_name_resolution_details.target_name
 
   for _, target_name_resolution_details in ipairs(collisions[target_name]) do
@@ -697,6 +740,9 @@ local function resolve_target_name_collision(target_name, target_details, projec
       end
     end
   end
+
+  -- update the target name on the target details
+  new_target_name_resolution_details.target_details.name = new_target_name_resolution_details.target_name
   table.insert(collisions[target_name], new_target_name_resolution_details)
 end
 
@@ -730,7 +776,7 @@ M._add_resolved_target_name_collisions = function(targets_map, project_root)
   end
 end
 
---- returns the project location fromt he project_root
+--- returns the project location from the project_root
 --- this is the location of the project i.e one folder before the project root
 --- e.g if the project_root was '/User/kkrime/go/src/prj', the project_location would be '/User/kkrime/go/src/'
 ---
@@ -826,6 +872,7 @@ function load_buildtargets()
 end
 
 function save_buildtargets()
+  vim.notify("inside save")
   local data = {
     M._cache, M._current_buildtargets
   }
