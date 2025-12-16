@@ -45,7 +45,7 @@ function M.setup(cfg)
     if cfg.buildtargets_save_location then
       save_location = cfg.buildtargets_save_location
     end
-    load_buildtargets()
+    M._load_buildtargets()
   end
 end
 
@@ -79,12 +79,7 @@ end
 function M.get_current_buildtarget()
   local project_root = get_project_root()
   local current_target = M._current_buildtargets[project_root]
-  if current_target then
-    if #M._cache[project_root][menu][items] > 1 then
-      return current_target
-    end
-  end
-  return nil
+  return current_target
 end
 
 --- gives the target name for a given target location
@@ -203,7 +198,6 @@ local function get_project_targets(bufnr, project_root)
     if M._cache[project_root] then
       -- this is a refresh
       M._refresh_project_buildtargets(targets, project_root)
-      vim.notify(vim.inspect({ "targets", targets }))
     else
       M._cache[project_root] = targets
       M._save_buildtargets()
@@ -436,8 +430,9 @@ function M.select_buildtarget(co)
     if #targets_names == 1 then
       -- if only one build target, send build target location
       local target_name = targets_names[1]
-      -- M._current_buildtargets[project_root] = target_name
       update_current_buildtarget(target_name, project_root)
+      -- TODO refactor so save_buildtargets only gets called once
+      M._save_buildtargets()
       local target_location = M._cache[project_root][target_name][location]
       vim.schedule(function()
         coroutine.resume(co, target_name, target_location, nil)
@@ -859,7 +854,7 @@ function path_exists(file)
   return uv.fs_stat(file) and true or false
 end
 
-function load_buildtargets()
+function M._load_buildtargets()
   if path_exists(save_location) then
     read_file(save_location, function(data)
       local data = vim.json.decode(data)
