@@ -206,8 +206,7 @@ local function get_project_targets(bufnr, project_root)
       vim.notify(vim.inspect({ "targets", targets }))
     else
       M._cache[project_root] = targets
-      vim.notify("safe")
-      save_buildtargets()
+      M._save_buildtargets()
     end
     -- vim.notify(vim.inspect({ "targets", targets = targets }))
   else
@@ -215,7 +214,7 @@ local function get_project_targets(bufnr, project_root)
     -- TODO think about this
     M._current_buildtargets[project_root] = nil
     -- TODO think about this
-    save_buildtargets()
+    M._save_buildtargets()
     return "no build targets found"
   end
 end
@@ -232,7 +231,7 @@ local function update_buildtarget_map(selection, project_root)
   local selection_idx = M._cache[project_root][selection][idx]
   if selection_idx == 1 then
     if current_buildtarget_changed then
-      save_buildtargets()
+      M._save_buildtargets()
     end
     return
   end
@@ -263,7 +262,7 @@ local function update_buildtarget_map(selection, project_root)
 
   M._cache[project_root][menu] = { items = menu_items, width = menu_width, height = menu_height }
 
-  save_buildtargets()
+  M._save_buildtargets()
 end
 
 --- momentarily sets the menu to blank for 20ms
@@ -331,7 +330,7 @@ local function show_menu(co)
     borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
     callback = function(_, sel)
       local selection = vim.api.nvim_get_current_line()
-      user_selection_target_name = M._cache[project_root][selection][location]
+      user_selection_target_name = M._cache[project_root][selection][name]
       user_selection_target_location = M._cache[project_root][selection][location]
       update_buildtarget_map(selection, project_root)
     end
@@ -453,7 +452,8 @@ end
 
 --- gets the build target and runs an callback passed into it
 --- with the build target as a parameter
----@param callback fun(a: target_name, b: target_location): location, target_name
+--- @return string error Error message on failure
+---@param callback fun(a: name, b: location):, target_name, location
 function M.run_action(callback)
   -- local target_name
   -- local target_location
@@ -464,25 +464,27 @@ function M.run_action(callback)
 
   if target_location then
     callback(target_name, target_location)
+    return nil
   else
     coroutine.wrap(function()
       local co = coroutine.running()
       local err = M.select_buildtarget(co)
       if err then
         vim.notify("error in select_buildgarget()" .. " failed", vim.log.levels.ERROR)
-        return
+        return nil
       end
       -- wait for user to select target
       target_name, target_location, err = coroutine.yield()
       if err then
         vim.notify("error getting build target" .. " failed", vim.log.levels.ERROR)
-        return
+        return error("error getting build target")
       elseif not target_location then
         -- user closed menu without making a selection
-        return
+        return error("no target selected")
       end
       -- vim.api.nvim_command([[:GoBuild ]] .. target_location)
       callback(target_name, target_location)
+      return nil
     end)()
   end
 end
@@ -588,7 +590,7 @@ M._refresh_project_buildtargets = function(new_targets, project_root)
   M._cache[project_root] = new_targets
   -- TODO think about this...
   if not vim.deep_equal(backup_menu_items, new_targets[menu][items]) then
-    save_buildtargets()
+    M._save_buildtargets()
   end
 end
 
@@ -871,7 +873,7 @@ function load_buildtargets()
   end
 end
 
-function save_buildtargets()
+function M._save_buildtargets()
   vim.notify("inside save")
   local data = {
     M._cache, M._current_buildtargets
